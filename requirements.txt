@@ -1,2 +1,4 @@
-aiogram
-aiohttp
+flask
+python-telegram-bot --upgrade
+httpx
+gunicorn
