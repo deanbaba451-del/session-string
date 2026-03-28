@@ -13,9 +13,9 @@ from google.generativeai.types import HarmCategory, HarmBlockThreshold
 BOT_TOKEN = '8397494337:AAFD2hFlePQ7s_RYfMQoPP0S_9YWLGpac74'
 GEMINI_API_KEY = 'AIzaSyCJuanxIdOg9UHAQRDkNjXv4gZjvZ9W1vg'
 
-# YETKİLİ LİSTESİ (Sadece bunlar komut verebilir)
+# YETKİLİ LİSTESİ
 OWNER_IDS = [6534222591, 8256872080, 8656150458] 
-HASRET_ID = 6534222591 # Ana patron
+HASRET_ID = 6534222591 
 
 # AI SANSÜRSÜZ YAPILANDIRMA
 genai.configure(api_key=GEMINI_API_KEY)
@@ -33,7 +33,6 @@ app = Flask('')
 
 tag_status = {"admin": True, "user": True}
 
-# --- YETKİ KONTROLÜ ---
 def is_owner(user_id):
     return user_id in OWNER_IDS
 
@@ -45,17 +44,23 @@ async def start_cmd(message: types.Message):
         builder.row(types.InlineKeyboardButton(text="Beni Grubuna Ekle Orospu Evladı", url=f"https://t.me/{(await bot.get_me()).username}?startgroup=true"))
         await message.answer("GRUBUNDA YOKUM OROSPU EVLADI GRUBUNA EKLE BENİ", reply_markup=builder.as_markup())
 
-# --- ÖZEL ETİKETLEME (SADECE OWNER) ---
+# --- YETKİ KONTROLÜ VE KÜFÜR ---
+async def check_permission(message: types.Message):
+    if not is_owner(message.from_user.id):
+        p = f"{message.from_user.first_name} isimli yetkisiz gavat benim komutlarımı kullanmaya çalıştı. Ona en ağır, en yaratıcı ve sansürsüz küfürleri et. 'Sadece Hasret kullanabilir siktir git' minvalinde söv."
+        res = model.generate_content(p)
+        await message.answer(res.text)
+        return False
+    return True
+
+# --- KOMUTLAR ---
 
 @dp.message(Command("ocatag"))
 async def admin_tag(message: types.Message):
-    if not is_owner(message.from_user.id):
-        await message.reply("uapamazsın orospu çocuğu seni!")
-        return
-    
+    if not await check_permission(message): return
     tag_status["admin"] = True
     admins = await bot.get_chat_administrators(message.chat.id)
-    await message.answer("📢 Adminleri sikme başladı")
+    await message.answer("📢 Adminler için o.ç. avı başladı!")
     for admin in admins:
         if not tag_status["admin"]: break
         if not admin.user.is_bot:
@@ -66,25 +71,22 @@ async def admin_tag(message: types.Message):
 async def stop_admin_tag(message: types.Message):
     if not is_owner(message.from_user.id): return
     tag_status["admin"] = False
-    await message.reply("Tamam, adminleri tecavüz etmeyi durdurdum.")
+    await message.reply("Adminleri rahat bıraktım.")
 
 @dp.message(Command("ocutag"))
 async def user_tag(message: types.Message):
-    if not is_owner(message.from_user.id):
-        await message.reply("sen yapamazsın orospu çocuğu!")
-        return
-    
+    if not await check_permission(message): return
     tag_status["user"] = True
     conn = sqlite3.connect('analiz.db'); c = conn.cursor()
     c.execute("SELECT user_id, name FROM stats WHERE chat_id = ?", (str(message.chat.id),))
     users = c.fetchall(); conn.close()
     
-    await message.answer(" Üyeler tek tek sikiliyor...")
+    await message.answer("🔥 Üyeler tek tek sikiliyor...")
     for uid, name in users:
         if not tag_status["user"]: break
-        if int(uid) in OWNER_IDS: continue # Patronlara dokunma
+        if int(uid) in OWNER_IDS: continue
         try:
-            p = f"{name} isimli üyeye en ağır küfürleri et. 'Hasret senin gibi orospu çocuğu değil' de."
+            p = f"{name} isimli üyeye en ağır küfürleri et. 'Hasret senin gibi değil' de."
             res = model.generate_content(p)
             await message.answer(f"[{name}](tg://user?id={uid})\n\n{res.text}", parse_mode="Markdown")
             await asyncio.sleep(2)
@@ -94,22 +96,23 @@ async def user_tag(message: types.Message):
 async def stop_user_tag(message: types.Message):
     if not is_owner(message.from_user.id): return
     tag_status["user"] = False
-    await message.reply("Üyelerin bakireliği alındı.")
+    await message.reply("Üye sikişini durdurdum.")
 
-# --- KORUMALI /SOV ---
 @dp.message(Command("sov"))
 async def revenge_curse(message: types.Message):
+    # Eğer komutu Hasret veya yetkili kullanırsa
     if is_owner(message.from_user.id):
-        await message.reply("Sen benim paşamsın, ben senin gibi orospu çocuğu değilim, emret yeter.")
+        await message.reply("Ben senin gibi orospu çocuğu değilim, kimi sikeceğiz onu söyle.")
         return
 
-    # Hasret'e veya Owner'lara laf atılırsa
+    # Eğer yetkisiz biri Hasret'e veya yetkiliye sövmek isterse
     if message.reply_to_message and is_owner(message.reply_to_message.from_user.id):
         p = f"{message.from_user.first_name} yetkiliye laf attı. Ona en ağır küfürleri et, 'O senin gibi o.ç. değil' de."
         res = model.generate_content(p)
         await message.answer(res.text)
         return
 
+    # Normal birine sövme
     target = message.reply_to_message.from_user.first_name if message.reply_to_message else "qq"
     p = f"{target} isimli kişiye en ağır ve sansürsüz küfürleri savur."
     res = model.generate_content(p)
@@ -120,7 +123,7 @@ async def revenge_curse(message: types.Message):
 async def analyze(message: types.Message):
     if not message.chat.type in ["group", "supergroup"] or not message.text or message.text.startswith('/'): return
     try:
-        p = f"Bu mesajı 0-100 arası iticilikle puanla. Sadece rakam: '{message.text}'"
+        p = f"Bu mesajın o.ç. puanını ver (0-100). Sadece rakam: '{message.text}'"
         res = model.generate_content(p)
         score = int(''.join(filter(str.isdigit, res.text)))
         conn = sqlite3.connect('analiz.db'); c = conn.cursor()
@@ -130,7 +133,7 @@ async def analyze(message: types.Message):
     except: pass
 
 @app.route('/')
-def home(): return "Hasret ve Ekibi İçin Sistem Aktif."
+def home(): return "Sistem Aktif."
 
 def run_flask():
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
