@@ -1,6 +1,4 @@
-import os
-import asyncio
-import threading
+import os, threading, asyncio
 from flask import Flask
 from telethon import TelegramClient
 from telethon.sessions import StringSession
@@ -9,83 +7,56 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 
 app = Flask(__name__)
 @app.route('/')
-def health(): return "terminal_yok_ama_cozum_var", 200
+def h(): return "ok", 200
 
-def run_flask():
-    port = int(os.environ.get("PORT", 8080))
-    app.run(host='0.0.0.0', port=port)
+def run():
+    app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 8080)))
 
-# Konuşma Durumları
-ID, HASH, PHONE, CODE, 2FA = range(5)
+ID, HASH, PHONE, CODE, PASS = range(5)
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("welcome king. let's get that string session.\nsend your **API_ID**:")
+async def start(u, c):
+    await u.message.reply_text("api_id?")
     return ID
 
-async def get_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data['id'] = update.message.text
-    await update.message.reply_text("now send your **API_HASH**:")
+async def get_id(u, c):
+    c.user_data['i'] = u.message.text
+    await u.message.reply_text("api_hash?")
     return HASH
 
-async def get_hash(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data['hash'] = update.message.text
-    await update.message.reply_text("send your **PHONE NUMBER** (with + and country code):")
+async def get_hash(u, c):
+    c.user_data['h'] = u.message.text
+    await u.message.reply_text("phone?")
     return PHONE
 
-async def get_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    phone = update.message.text
-    context.user_data['phone'] = phone
-    
-    # Telethon başlat
-    client = TelegramClient(StringSession(), int(context.user_data['id']), context.user_data['hash'])
-    await client.connect()
-    
-    try:
-        sent = await client.send_code_request(phone)
-        context.user_data['client'] = client
-        context.user_data['phone_hash'] = sent.phone_code_hash
-        await update.message.reply_text("check your telegram messages and send the **LOGIN CODE**:")
-        return CODE
-    except Exception as e:
-        await update.message.reply_text(f"error: {str(e)}")
-        return ConversationHandler.END
+async def get_phone(u, c):
+    c.user_data['p'] = u.message.text
+    cl = TelegramClient(StringSession(), int(c.user_data['i']), c.user_data['h'])
+    await cl.connect()
+    s = await cl.send_code_request(c.user_data['p'])
+    c.user_data['cl'], c.user_data['sh'] = cl, s.phone_code_hash
+    await u.message.reply_text("code?")
+    return CODE
 
-async def get_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    code = update.message.text
-    client = context.user_data['client']
-    phone = context.user_data['phone']
-    phone_hash = context.user_data['phone_hash']
-    
+async def get_code(u, c):
+    cl, p, sh = c.user_data['cl'], c.user_data['p'], c.user_data['sh']
     try:
-        await client.sign_in(phone, code, phone_code_hash=phone_hash)
-        string = client.session.save()
-        await update.message.reply_text(f"here is your string session (KEEP IT SECRET):\n\n`{string}`", parse_mode='Markdown')
-        await client.disconnect()
+        await cl.sign_in(p, u.message.text, phone_code_hash=sh)
+        await u.message.reply_text(f"`{cl.session.save()}`", parse_mode='Markdown')
+        await cl.disconnect()
         return ConversationHandler.END
-    except Exception as e:
-        if "Two-step verification" in str(e) or "password" in str(e).lower():
-            await update.message.reply_text("2FA enabled. send your **PASSWORD**:")
-            return 2FA
-        await update.message.reply_text(f"error: {str(e)}")
-        return ConversationHandler.END
+    except:
+        await u.message.reply_text("password?")
+        return PASS
 
-async def get_2fa(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    password = update.message.text
-    client = context.user_data['client']
-    try:
-        await client.sign_in(password=password)
-        string = client.session.save()
-        await update.message.reply_text(f"done! here is your string session:\n\n`{string}`", parse_mode='Markdown')
-        await client.disconnect()
-        return ConversationHandler.END
-    except Exception as e:
-        await update.message.reply_text(f"error: {str(e)}")
-        return ConversationHandler.END
+async def get_pass(u, c):
+    cl = c.user_data['cl']
+    await cl.sign_in(password=u.message.text)
+    await u.message.reply_text(f"`{cl.session.save()}`", parse_mode='Markdown')
+    await cl.disconnect()
+    return ConversationHandler.END
 
 def main():
-    bot_token = os.environ.get("BOT_TOKEN")
-    app_bot = Application.builder().token(bot_token).build()
-    
+    bot = Application.builder().token(os.environ.get("BOT_TOKEN")).build()
     conv = ConversationHandler(
         entry_points=[CommandHandler('start', start)],
         states={
@@ -93,14 +64,13 @@ def main():
             HASH: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_hash)],
             PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_phone)],
             CODE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_code)],
-            2FA: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_2fa)],
+            PASS: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_pass)],
         },
-        fallbacks=[CommandHandler('cancel', lambda u,c: ConversationHandler.END)]
+        fallbacks=[CommandHandler('start', start)]
     )
-    
-    app_bot.add_handler(conv)
-    app_bot.run_polling()
+    bot.add_handler(conv)
+    bot.run_polling()
 
 if __name__ == "__main__":
-    threading.Thread(target=run_flask, daemon=True).start()
+    threading.Thread(target=run, daemon=True).start()
     main()
