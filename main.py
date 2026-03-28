@@ -15,7 +15,8 @@ def run():
 ID, HASH, PHONE, CODE, PASS = range(5)
 
 async def start(u, c):
-    await u.message.reply_text("api_id.")
+    c.user_data.clear() # her startta hafızayı temizle
+    await u.message.reply_text("api_id?")
     return ID
 
 async def get_id(u, c):
@@ -30,20 +31,24 @@ async def get_hash(u, c):
 
 async def get_phone(u, c):
     c.user_data['p'] = u.message.text
-    # telegram'ı ikna eden kısım burası:
-    cl = TelegramClient(
-        StringSession(), 
-        int(c.user_data['i']), 
-        c.user_data['h'],
-        device_model="iPhone 15 Pro",
-        system_version="17.4.1",
-        app_version="10.9.1"
-    )
-    await cl.connect()
-    s = await cl.send_code_request(c.user_data['p'])
-    c.user_data['cl'], c.user_data['sh'] = cl, s.phone_code_hash
-    await u.message.reply_text("code?")
-    return CODE
+    try:
+        # cihaz bilgilerini daha standart bir hale getirdik
+        cl = TelegramClient(
+            StringSession(), 
+            int(c.user_data['i']), 
+            c.user_data['h'],
+            device_model="iPhone",
+            system_version="iOS 17",
+            app_version="10.0"
+        )
+        await cl.connect()
+        s = await cl.send_code_request(c.user_data['p'])
+        c.user_data['cl'], c.user_data['sh'] = cl, s.phone_code_hash
+        await u.message.reply_text("code?")
+        return CODE
+    except Exception as e:
+        await u.message.reply_text(f"error: {str(e).lower()}")
+        return ConversationHandler.END
 
 async def get_code(u, c):
     cl, p, sh = c.user_data['cl'], c.user_data['p'], c.user_data['sh']
@@ -52,15 +57,21 @@ async def get_code(u, c):
         await u.message.reply_text(f"`{cl.session.save()}`", parse_mode='Markdown')
         await cl.disconnect()
         return ConversationHandler.END
-    except:
-        await u.message.reply_text("password?")
-        return PASS
+    except Exception as e:
+        if "password" in str(e).lower():
+            await u.message.reply_text("password?")
+            return PASS
+        await u.message.reply_text(f"error: {str(e).lower()}")
+        return ConversationHandler.END
 
 async def get_pass(u, c):
     cl = c.user_data['cl']
-    await cl.sign_in(password=u.message.text)
-    await u.message.reply_text(f"`{cl.session.save()}`", parse_mode='Markdown')
-    await cl.disconnect()
+    try:
+        await cl.sign_in(password=u.message.text)
+        await u.message.reply_text(f"`{cl.session.save()}`", parse_mode='Markdown')
+        await cl.disconnect()
+    except Exception as e:
+        await u.message.reply_text(f"error: {str(e).lower()}")
     return ConversationHandler.END
 
 def main():
