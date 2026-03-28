@@ -1,4 +1,5 @@
+aiogram
 flask
-python-telegram-bot
-httpx
 gunicorn
+google-generativeai
+asyncio
