@@ -1,100 +1,116 @@
 import os
+import sqlite3
 import asyncio
-import aiohttp
-from aiogram import Bot, Dispatcher, F
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message, CallbackQuery
+from flask import Flask
+from threading import Thread
+from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
-from aiohttp import web
-
-# --- RENDER.COM PORT DİNLEME (FLASK YERİNE AIOHTTP) ---
-async def handle(request):
-    return web.Response(text="Bot Aktif!")
-
-async def start_web_server():
-    app = web.Application()
-    app.router.add_get('/', handle)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    # Render'ın verdiği portu buradan yakalıyor
-    port = int(os.environ.get('PORT', 8080))
-    site = web.TCPSite(runner, '0.0.0.0', port)
-    await site.start()
+import google.generativeai as genai
+from datetime import datetime, timedelta
 
 # --- AYARLAR ---
-TOKEN = "8606960539:AAGnZRWG0Lb4KnTgXdmBt0G1NQoAEJjyUD0"
-BASE_URL = "https://arastir.sbs/api"
+BOT_TOKEN = '8737945154:AAEJTTc4XqsyXGiZqwqyddC5h0J_7bBjW64'
+GEMINI_API_KEY = 'AIzaSyCJuanxIdOg9UHAQRDkNjXv4gZjvZ9W1vg'
+GRUP_ID = -1003873976696
 
-bot = Bot(token=TOKEN)
+# AI Yapılandırması
+genai.configure(api_key=GEMINI_API_KEY)
+model = genai.GenerativeModel('gemini-1.5-flash')
+
+# --- VERİTABANI ---
+def db_setup():
+    conn = sqlite3.connect('analiz.db')
+    cursor = conn.cursor()
+    cursor.execute('''CREATE TABLE IF NOT EXISTS stats 
+                      (user_id TEXT PRIMARY KEY, name TEXT, puan INTEGER)''')
+    conn.commit()
+    conn.close()
+
+def update_puan(user_id, name, ek_puan):
+    conn = sqlite3.connect('analiz.db')
+    cursor = conn.cursor()
+    cursor.execute("INSERT OR IGNORE INTO stats (user_id, name, puan) VALUES (?, ?, 0)", (user_id, name))
+    cursor.execute("UPDATE stats SET puan = puan + ?, name = ? WHERE user_id = ?", (ek_puan, name, user_id))
+    conn.commit()
+    conn.close()
+
+def get_rankings():
+    conn = sqlite3.connect('analiz.db')
+    cursor = conn.cursor()
+    cursor.execute("SELECT name, puan FROM stats ORDER BY puan DESC LIMIT 10")
+    data = cursor.fetchall()
+    conn.close()
+    return data
+
+def reset_db():
+    conn = sqlite3.connect('analiz.db')
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM stats")
+    conn.commit()
+    conn.close()
+
+# --- RENDER FLASK ---
+app = Flask('')
+@app.route('/')
+def home(): return "Sessiz Analiz Aktif!"
+
+def run_flask():
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
+
+# --- BOT MANTIĞI ---
+bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
-user_action = {}
 
-# --- GÖRSELDEKİ MENÜ SIRALAMASI ---
-def main_menu():
-    kb = [
-        [InlineKeyboardButton(text="🏠 Anasayfa", callback_data="s_home")],
-        [InlineKeyboardButton(text="👤 Ad Soyad Sorgula", callback_data="s_adsoyad")],
-        [InlineKeyboardButton(text="💳 TC Sorgula", callback_data="s_tc")],
-        [InlineKeyboardButton(text="🏢 İşyeri Sorgula", callback_data="s_isyeri")],
-        [InlineKeyboardButton(text="📍 Adres Sorgula", callback_data="s_adres")],
-        [InlineKeyboardButton(text="👨‍👩‍👧‍👦 Aile Sorgula", callback_data="s_aile")],
-        [InlineKeyboardButton(text="🏘️ Sülale Sorgula", callback_data="s_sulale")],
-        [InlineKeyboardButton(text="👶 Çocuk Sorgula", callback_data="s_cocuk")],
-        [InlineKeyboardButton(text="📱 TC-GSM Sorgula", callback_data="s_tcgsm")],
-        [InlineKeyboardButton(text="📞 GSM-TC Sorgula", callback_data="s_gsmtc")]
-    ]
-    return InlineKeyboardMarkup(inline_keyboard=kb)
-
-@dp.message(Command("start"))
-async def start(message: Message):
-    await message.answer(f"👋 Selam **{message.from_user.first_name}**,\nLütfen işlem seç:", 
-                         reply_markup=main_menu(), parse_mode="Markdown")
-
-@dp.callback_query(F.data.startswith("s_"))
-async def callback(call: CallbackQuery):
-    action = call.data.split("_")[1]
-    user_action[call.from_user.id] = action
-    
-    prompts = {
-        "adsoyad": "👤 Ad ve Soyad giriniz (Örn: Ali Veli):",
-        "gsmtc": "📞 GSM No giriniz (0 olmadan):",
-        "tc": "💳 11 Haneli TC giriniz:"
-    }
-    await call.message.answer(prompts.get(action, "📝 Sorgulanacak TC No giriniz:"))
-    await call.answer()
+@dp.message(Command("kim"))
+async def manual_check(message: types.Message):
+    rankings = get_rankings()
+    if not rankings:
+        await message.reply("Henüz veri yok.")
+        return
+    msg = "📊 **GÜNCEL OROSPU ÇOCUĞU SKORLARI** 📊\n\n"
+    for i, (name, puan) in enumerate(rankings, 1):
+        msg += f"{i}. {name} — %{min(puan, 100)} O.Ç.\n"
+    await message.answer(msg)
 
 @dp.message()
-async def query(message: Message):
-    uid = message.from_user.id
-    if uid not in user_action: return
+async def ai_collector(message: types.Message):
+    if not message.chat.type in ["group", "supergroup"] or not message.text:
+        return
     
-    act = user_action[uid]
-    status = await message.reply("⌛ Veritabanı taranıyor...")
+    user_id = str(message.from_user.id)
+    name = message.from_user.first_name
     
-    async with aiohttp.ClientSession() as session:
-        try:
-            if act == "adsoyad":
-                p = message.text.split()
-                url = f"{BASE_URL}/adsoyad.php?adi={p[0]}&soyadi={p[1]}"
-            elif act == "gsmtc":
-                url = f"{BASE_URL}/gsmtc.php?gsm={message.text}"
-            else:
-                url = f"{BASE_URL}/{act}.php?tc={message.text}"
-            
-            async with session.get(url) as r:
-                data = await r.json()
-                if not data:
-                    await status.edit("❌ Kayıt bulunamadı.")
-                else:
-                    # Gelen JSON verisini basitçe yazdırır, burayı görsele göre süsleyebilirsin
-                    await status.edit(f"📋 **Sonuçlar:**\n\n`{str(data)}`", parse_mode="Markdown")
-        except:
-            await status.edit("⚠️ API hatası oluştu.")
-    
-    del user_action[uid]
+    try:
+        # AI Analizi (Sessizce puanlar)
+        prompt = f"Bu mesajı 'iticilik ve toksiklik' açısından 0-100 arası puanla. Sadece rakam: '{message.text}'"
+        response = model.generate_content(prompt)
+        score_str = ''.join(filter(str.isdigit, response.text))
+        score = int(score_str) if score_str else 1
+        update_puan(user_id, name, score)
+    except:
+        update_puan(user_id, name, 1)
+
+# Gece 00:00 Raporu (TR Saati UTC+3)
+async def timer_task():
+    while True:
+        now = (datetime.utcnow() + timedelta(hours=3)).strftime("%H:%M")
+        if now == "00:00":
+            rankings = get_rankings()
+            if rankings:
+                msg = f"📅 **{datetime.now().strftime('%d/%m/%Y')} GÜNÜN OROSPU ÇOCUĞU LİSTESİ**\n"
+                msg += "--------------------------------------\n"
+                for i, (name, puan) in enumerate(rankings, 1):
+                    msg += f"{i}. {name} — %{min(puan, 100)} OROSPU ÇOCUĞU\n"
+                msg += "\n_Yeni gün başladı, günahlar sıfırlandı._"
+                await bot.send_message(GRUP_ID, msg)
+                reset_db()
+            await asyncio.sleep(60)
+        await asyncio.sleep(30)
 
 async def main():
-    # Hem web server'ı hem botu aynı anda başlatıyoruz
-    await start_web_server()
+    db_setup()
+    Thread(target=run_flask).start()
+    asyncio.create_task(timer_task())
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
