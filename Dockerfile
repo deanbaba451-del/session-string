@@ -1,18 +1,18 @@
-# Hafif ve hızlı bir python imajı kullanıyoruz
+# Python 3.9 tabanlı hafif imaj
 FROM python:3.9-slim
 
-# Çalışma dizinini ayarla
+# Çalışma dizini
 WORKDIR /app
 
-# Gerekli paket listesini kopyala ve yükle
+# Gerekli dosyaları kopyala ve kütüphaneleri kur
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Tüm proje dosyalarını içeri aktar
+# Proje dosyalarını kopyala
 COPY . .
 
-# Flask için portu aç (Render genelde 10000 veya 5000 kullanır)
+# Flask portunu dışarı aç (Render için 5000)
 EXPOSE 5000
 
-# Botu ve Flask'ı başlatan komut
+# Botu ve Web Server'ı başlat
 CMD ["python", "main.py"]
