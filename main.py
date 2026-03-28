@@ -1,77 +1,110 @@
-import asyncio
 import os
-from flask import Flask
-from threading import Thread
-from aiogram import Bot, Dispatcher, types, executor
+import asyncio
+import aiohttp
+from aiogram import Bot, Dispatcher, F
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message, CallbackQuery
+from aiogram.filters import Command
+from aiohttp import web
 
-# --- YAPILANDIRMA ---
-h = os.getenv("h") # Render'da değişken adını 'h' yap
-OWNER_ID = 6534222591
+# --- RENDER PORT AYARI (BOTUN KAPANMAMASI İÇİN) ---
+async def handle(request):
+    return web.Response(text="Bot Aktif!")
 
-# --- FLASK SERVER ---
-app = Flask('')
+async def start_web_server():
+    app = web.Application()
+    app.router.add_get('/', handle)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    # Render'ın verdiği portu otomatik yakalar
+    site = web.TCPSite(runner, '0.0.0.0', int(os.environ.get('PORT', 8080)))
+    await site.start()
 
-@app.route('/')
-def home():
-    return "Bot Aktif!"
+# --- BOT AYARLARI ---
+TOKEN = "8606960539:AAGnZRWG0Lb4KnTgXdmBt0G1NQoAEJjyUD0"
+BASE_URL = "https://arastir.sbs/api"
 
-def run():
-    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 8080)))
+bot = Bot(token=TOKEN)
+dp = Dispatcher()
 
-def keep_alive():
-    t = Thread(target=run)
-    t.daemon = True
-    t.start()
+# --- GÖRSELDEKİ ANA MENÜ ---
+def main_menu():
+    kb = [
+        [InlineKeyboardButton(text="🏠 Anasayfa", callback_data="m_home")],
+        [InlineKeyboardButton(text="👤 Ad Soyad Sorgula", callback_data="s_adsoyad")],
+        [InlineKeyboardButton(text="💳 TC Sorgula", callback_data="s_tc")],
+        [InlineKeyboardButton(text="🏢 İşyeri Sorgula", callback_data="s_isyeri")],
+        [InlineKeyboardButton(text="📍 Adres Sorgula", callback_data="s_adres")],
+        [InlineKeyboardButton(text="👨‍👩‍👧‍👦 Aile Sorgula", callback_data="s_aile")],
+        [InlineKeyboardButton(text="🏘️ Sülale Sorgula", callback_data="s_sulale")],
+        [InlineKeyboardButton(text="👶 Çocuk Sorgula", callback_data="s_cocuk")],
+        [InlineKeyboardButton(text="📱 TC-GSM Sorgula", callback_data="s_tcgsm")],
+        [InlineKeyboardButton(text="📞 GSM-TC Sorgula", callback_data="s_gsmtc")]
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=kb)
 
-# --- BOT MANTIĞI ---
-bot = Bot(token=h)
-dp = Dispatcher(bot)
+# --- SORGULAMA DURUMU ---
+user_action = {}
 
-storage = {"content": None, "type": None, "is_spamming": False}
+@dp.message(Command("start"))
+async def start(message: Message):
+    await message.reply(f"👋 Merhaba **{message.from_user.first_name}**,\n\n👇 Lütfen işlemini seç.", 
+                        reply_markup=main_menu(), parse_mode="Markdown")
 
-@dp.message_handler(commands=['cpspamla'])
-async def start_spam(message: types.Message):
-    if message.from_user.id != OWNER_ID:
-        return
-    if not storage["content"]:
-        await message.reply("Hafıza boş!")
-        return
+@dp.callback_query(F.data.startswith("s_"))
+async def handle_callback(call: CallbackQuery):
+    action = call.data.split("_")[1]
+    user_action[call.from_user.id] = action
+    
+    texts = {
+        "adsoyad": "👤 Ad ve Soyad giriniz (Örn: Ahmet Yılmaz):",
+        "gsmtc": "📞 GSM No giriniz (Başında 0 olmadan):",
+        "tc": "💳 11 Haneli TC No giriniz:"
+    }
+    await call.message.answer(texts.get(action, "📝 Lütfen sorgulanacak TC No giriniz:"))
+    await call.answer()
 
-    storage["is_spamming"] = True
-    while storage["is_spamming"]:
+@dp.message()
+async def query_handler(message: Message):
+    uid = message.from_user.id
+    if uid not in user_action: return
+    
+    action = user_action[uid]
+    status = await message.reply("🔍 Veritabanı taranıyor...")
+    
+    async with aiohttp.ClientSession() as session:
         try:
-            c, t = storage["content"], storage["type"]
-            if t == "text": await bot.send_message(message.chat.id, c)
-            elif t == "photo": await bot.send_photo(message.chat.id, c)
-            elif t == "video": await bot.send_video(message.chat.id, c)
-            elif t == "voice": await bot.send_voice(message.chat.id, c)
-            elif t == "video_note": await bot.send_video_note(message.chat.id, c)
-            elif t == "audio": await bot.send_audio(message.chat.id, c)
-            elif t == "document": await bot.send_document(message.chat.id, c)
-            await asyncio.sleep(0.2)
+            # API İstek Hazırlığı
+            if action == "adsoyad":
+                parts = message.text.split()
+                url = f"{BASE_URL}/adsoyad.php?adi={parts[0]}&soyadi={parts[1]}"
+            elif action == "gsmtc":
+                url = f"{BASE_URL}/gsmtc.php?gsm={message.text}"
+            else:
+                url = f"{BASE_URL}/{action}.php?tc={message.text}"
+            
+            async with session.get(url) as resp:
+                data = await resp.json()
+                
+                if not data:
+                    await status.edit("🔍 Kayıt bulunamadı.")
+                else:
+                    # Görseldeki gibi sonuç formatı
+                    res = "📋 **Sorgu Sonuçları:**\n\n"
+                    if isinstance(data, list):
+                        for item in data[:3]: # Çoklu kayıtta ilk 3'ü göster
+                            res += f"👤 {item.get('adi')} {item.get('soyadi')}\n🆔 TC: `{item.get('tc')}`\n\n"
+                    else:
+                        res += f"👤 Ad Soyad: {data.get('adi')} {data.get('soyadi')}\n🆔 TC: `{data.get('tc')}`"
+                    
+                    await status.edit(res, parse_mode="Markdown")
         except:
-            await asyncio.sleep(1)
+            await status.edit("⚠️ API hatası oluştu.")
+    
+    del user_action[uid]
 
-@dp.message_handler(commands=['cpdur'])
-async def stop_spam(message: types.Message):
-    if message.from_user.id == OWNER_ID:
-        storage["is_spamming"] = False
-        await message.answer("qq infaz verildi")
+async def main():
+    await start_web_server()
+    await dp.start_polling(bot)
 
-@dp.message_handler(content_types=types.ContentType.ANY)
-async def store_media(message: types.Message):
-    if message.from_user.id != OWNER_ID or (message.text and message.text.startswith('/')):
-        return
-
-    if message.text: storage["content"], storage["type"] = message.text, "text"
-    elif message.photo: storage["content"], storage["type"] = message.photo[-1].file_id, "photo"
-    elif message.video: storage["content"], storage["type"] = message.video.file_id, "video"
-    elif message.voice: storage["content"], storage["type"] = message.voice.file_id, "voice"
-    elif message.video_note: storage["content"], storage["type"] = message.video_note.file_id, "video_note"
-    elif message.audio: storage["content"], storage["type"] = message.audio.file_id, "audio"
-    elif message.document: storage["content"], storage["type"] = message.document.file_id, "document"
-    await message.reply("Kaydedildi.")
-
-if __name__ == '__main__':
-    keep_alive()
-    executor.start_polling(dp, skip_updates=True)
+if __name__ == "__main__":
+    asyncio.run(main())
