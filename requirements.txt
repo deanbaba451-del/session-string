@@ -2,4 +2,3 @@ aiogram
 flask
 gunicorn
 google-generativeai
-asyncio
