@@ -10,7 +10,7 @@ import google.generativeai as genai
 from google.generativeai.types import HarmCategory, HarmBlockThreshold
 
 # --- AYARLAR ---
-BOT_TOKEN = '8397494337:AAFD2hFlePQ7s_RYfMQoPP0S_9YWLGpac74'
+BOT_TOKEN = '8737945154:AAEJTTc4XqsyXGiZqwqyddC5h0J_7bBjW64'
 GEMINI_API_KEY = 'AIzaSyCJuanxIdOg9UHAQRDkNjXv4gZjvZ9W1vg'
 
 # YETKİLİ LİSTESİ
