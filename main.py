@@ -15,7 +15,7 @@ def run():
 ID, HASH, PHONE, CODE, PASS = range(5)
 
 async def start(u, c):
-    await u.message.reply_text("api_id?")
+    await u.message.reply_text("api_id.")
     return ID
 
 async def get_id(u, c):
@@ -30,7 +30,15 @@ async def get_hash(u, c):
 
 async def get_phone(u, c):
     c.user_data['p'] = u.message.text
-    cl = TelegramClient(StringSession(), int(c.user_data['i']), c.user_data['h'])
+    # telegram'ı ikna eden kısım burası:
+    cl = TelegramClient(
+        StringSession(), 
+        int(c.user_data['i']), 
+        c.user_data['h'],
+        device_model="iPhone 15 Pro",
+        system_version="17.4.1",
+        app_version="10.9.1"
+    )
     await cl.connect()
     s = await cl.send_code_request(c.user_data['p'])
     c.user_data['cl'], c.user_data['sh'] = cl, s.phone_code_hash
@@ -66,7 +74,8 @@ def main():
             CODE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_code)],
             PASS: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_pass)],
         },
-        fallbacks=[CommandHandler('start', start)]
+        fallbacks=[CommandHandler('start', start)],
+        allow_reentry=True
     )
     bot.add_handler(conv)
     bot.run_polling()
