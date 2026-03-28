@@ -1,96 +1,77 @@
-import os, threading, asyncio
+import asyncio
+import os
 from flask import Flask
-from telethon import TelegramClient
-from telethon.sessions import StringSession
-from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler
+from threading import Thread
+from aiogram import Bot, Dispatcher, types, executor
 
-app = Flask(__name__)
+# --- YAPILANDIRMA ---
+h = os.getenv("h") # Render'da değişken adını 'h' yap
+OWNER_ID = 6534222591
+
+# --- FLASK SERVER ---
+app = Flask('')
+
 @app.route('/')
-def h(): return "ok", 200
+def home():
+    return "Bot Aktif!"
 
 def run():
-    app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 8080)))
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 8080)))
 
-ID, HASH, PHONE, CODE, PASS = range(5)
+def keep_alive():
+    t = Thread(target=run)
+    t.daemon = True
+    t.start()
 
-async def start(u, c):
-    c.user_data.clear() # her startta hafızayı temizle
-    await u.message.reply_text("api_id?")
-    return ID
+# --- BOT MANTIĞI ---
+bot = Bot(token=h)
+dp = Dispatcher(bot)
 
-async def get_id(u, c):
-    c.user_data['i'] = u.message.text
-    await u.message.reply_text("api_hash?")
-    return HASH
+storage = {"content": None, "type": None, "is_spamming": False}
 
-async def get_hash(u, c):
-    c.user_data['h'] = u.message.text
-    await u.message.reply_text("phone?")
-    return PHONE
+@dp.message_handler(commands=['cpspamla'])
+async def start_spam(message: types.Message):
+    if message.from_user.id != OWNER_ID:
+        return
+    if not storage["content"]:
+        await message.reply("Hafıza boş!")
+        return
 
-async def get_phone(u, c):
-    c.user_data['p'] = u.message.text
-    try:
-        # cihaz bilgilerini daha standart bir hale getirdik
-        cl = TelegramClient(
-            StringSession(), 
-            int(c.user_data['i']), 
-            c.user_data['h'],
-            device_model="iPhone",
-            system_version="iOS 17",
-            app_version="10.0"
-        )
-        await cl.connect()
-        s = await cl.send_code_request(c.user_data['p'])
-        c.user_data['cl'], c.user_data['sh'] = cl, s.phone_code_hash
-        await u.message.reply_text("code?")
-        return CODE
-    except Exception as e:
-        await u.message.reply_text(f"error: {str(e).lower()}")
-        return ConversationHandler.END
+    storage["is_spamming"] = True
+    while storage["is_spamming"]:
+        try:
+            c, t = storage["content"], storage["type"]
+            if t == "text": await bot.send_message(message.chat.id, c)
+            elif t == "photo": await bot.send_photo(message.chat.id, c)
+            elif t == "video": await bot.send_video(message.chat.id, c)
+            elif t == "voice": await bot.send_voice(message.chat.id, c)
+            elif t == "video_note": await bot.send_video_note(message.chat.id, c)
+            elif t == "audio": await bot.send_audio(message.chat.id, c)
+            elif t == "document": await bot.send_document(message.chat.id, c)
+            await asyncio.sleep(0.2)
+        except:
+            await asyncio.sleep(1)
 
-async def get_code(u, c):
-    cl, p, sh = c.user_data['cl'], c.user_data['p'], c.user_data['sh']
-    try:
-        await cl.sign_in(p, u.message.text, phone_code_hash=sh)
-        await u.message.reply_text(f"`{cl.session.save()}`", parse_mode='Markdown')
-        await cl.disconnect()
-        return ConversationHandler.END
-    except Exception as e:
-        if "password" in str(e).lower():
-            await u.message.reply_text("password?")
-            return PASS
-        await u.message.reply_text(f"error: {str(e).lower()}")
-        return ConversationHandler.END
+@dp.message_handler(commands=['cpdur'])
+async def stop_spam(message: types.Message):
+    if message.from_user.id == OWNER_ID:
+        storage["is_spamming"] = False
+        await message.answer("qq infaz verildi")
 
-async def get_pass(u, c):
-    cl = c.user_data['cl']
-    try:
-        await cl.sign_in(password=u.message.text)
-        await u.message.reply_text(f"`{cl.session.save()}`", parse_mode='Markdown')
-        await cl.disconnect()
-    except Exception as e:
-        await u.message.reply_text(f"error: {str(e).lower()}")
-    return ConversationHandler.END
+@dp.message_handler(content_types=types.ContentType.ANY)
+async def store_media(message: types.Message):
+    if message.from_user.id != OWNER_ID or (message.text and message.text.startswith('/')):
+        return
 
-def main():
-    bot = Application.builder().token(os.environ.get("BOT_TOKEN")).build()
-    conv = ConversationHandler(
-        entry_points=[CommandHandler('start', start)],
-        states={
-            ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_id)],
-            HASH: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_hash)],
-            PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_phone)],
-            CODE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_code)],
-            PASS: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_pass)],
-        },
-        fallbacks=[CommandHandler('start', start)],
-        allow_reentry=True
-    )
-    bot.add_handler(conv)
-    bot.run_polling()
+    if message.text: storage["content"], storage["type"] = message.text, "text"
+    elif message.photo: storage["content"], storage["type"] = message.photo[-1].file_id, "photo"
+    elif message.video: storage["content"], storage["type"] = message.video.file_id, "video"
+    elif message.voice: storage["content"], storage["type"] = message.voice.file_id, "voice"
+    elif message.video_note: storage["content"], storage["type"] = message.video_note.file_id, "video_note"
+    elif message.audio: storage["content"], storage["type"] = message.audio.file_id, "audio"
+    elif message.document: storage["content"], storage["type"] = message.document.file_id, "document"
+    await message.reply("Kaydedildi.")
 
-if __name__ == "__main__":
-    threading.Thread(target=run, daemon=True).start()
-    main()
+if __name__ == '__main__':
+    keep_alive()
+    executor.start_polling(dp, skip_updates=True)
